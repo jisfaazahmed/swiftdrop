@@ -9,9 +9,12 @@ import { errorMessage } from '@/lib/api/errors';
 /** Owner: M2. Works as soon as POST /auth/login is implemented. TODO(M2): Google sign-in button → /api/v1/auth/google */
 export function LoginForm() {
   const router = useRouter();
-  const next = useSearchParams().get('next');
-  const [error, setError] = useState<string>();
+  const searchParams = useSearchParams();
+  const next = searchParams.get('next');
+  const urlError = searchParams.get('error');
+  const [error, setError] = useState<string | undefined>(urlError ?? undefined);
   const [pending, setPending] = useState(false);
+  const [googlePending, setGooglePending] = useState(false);
 
   async function onSubmit(form: FormData) {
     setPending(true);
@@ -23,6 +26,26 @@ export function LoginForm() {
     if (error || !data) return setError(errorMessage(error, 'Sign-in failed'));
     router.push(next ?? data.home);
     router.refresh();
+  }
+
+  async function handleGoogleSignIn(e: React.MouseEvent) {
+    e.preventDefault();
+    setGooglePending(true);
+    setError(undefined);
+    try {
+      const res = await fetch('/api/v1/auth/google', { method: 'GET', redirect: 'manual' });
+      if (res.status === 501) {
+        const body = await res.json().catch(() => null);
+        setError(body?.error?.message ?? 'Google OAuth is not configured in this environment');
+        setGooglePending(false);
+        return;
+      }
+      // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+      window.location.assign('/api/v1/auth/google');
+    } catch {
+      // eslint-disable-next-line @next/next/no-location-assign-relative-destination
+      window.location.assign('/api/v1/auth/google');
+    }
   }
 
   return (
@@ -40,7 +63,7 @@ export function LoginForm() {
           required
         />
       </FormField>
-      <Button type="submit" disabled={pending} className="w-full">
+      <Button type="submit" disabled={pending || googlePending} className="w-full">
         {pending ? 'Signing in…' : 'Sign in'}
       </Button>
 
@@ -51,9 +74,11 @@ export function LoginForm() {
         </div>
       </div>
 
-      <a
-        href="/api/v1/auth/google"
-        className="flex w-full items-center justify-center gap-2 rounded-md border border-line bg-surface px-4 py-2 text-sm font-medium text-ink transition hover:bg-canvas"
+      <button
+        type="button"
+        onClick={handleGoogleSignIn}
+        disabled={googlePending || pending}
+        className="flex w-full items-center justify-center gap-2 rounded-md border border-line bg-surface px-4 py-2 text-sm font-medium text-ink transition hover:bg-canvas disabled:opacity-60 cursor-pointer"
       >
         <svg className="h-4 w-4" viewBox="0 0 24 24">
           <path
@@ -73,8 +98,9 @@ export function LoginForm() {
             d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.06l3.66 2.84c.87-2.6 3.3-4.52 6.16-4.52z"
           />
         </svg>
-        Sign in with Google
-      </a>
+        {googlePending ? 'Connecting to Google…' : 'Sign in with Google'}
+      </button>
     </form>
   );
 }
+

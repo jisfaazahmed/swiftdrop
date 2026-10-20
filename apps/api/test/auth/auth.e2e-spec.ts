@@ -228,6 +228,22 @@ describe('auth module (integration)', () => {
     });
   });
 
+  describe('GET /api/v1/auth/google', () => {
+    it('handles Google OAuth endpoint (302 redirect when configured, 501 when unconfigured)', async () => {
+      const res = await request(t.http).get('/api/v1/auth/google');
+      if (res.status === 302) {
+        expect(res.headers.location).toContain('accounts.google.com/o/oauth2/v2/auth');
+        const cookies = res.headers['set-cookie'] as unknown as string[];
+        expect(cookies.some((c: string) => c.includes('sd_oauth_verifier'))).toBe(true);
+        expect(cookies.some((c: string) => c.includes('sd_oauth_state'))).toBe(true);
+      } else {
+        expect(res.status).toBe(501);
+        expect(res.body.error.code).toBe('NOT_IMPLEMENTED');
+        expect(res.body.error.message).toContain('Google OAuth is not configured in this environment');
+      }
+    });
+  });
+
   describe('Admin staff management & authorization', () => {
     it('forbids non-admin users from accessing /admin/users (403 FORBIDDEN)', async () => {
       const customerCookie = await t.cookieFor('CUSTOMER');
