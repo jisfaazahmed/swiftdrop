@@ -228,6 +228,17 @@ describe('auth module (integration)', () => {
     });
   });
 
+  describe('GET /api/v1/auth/google', () => {
+    it('returns 501 NOT_IMPLEMENTED when GOOGLE_CLIENT_ID is not configured', async () => {
+      const res = await request(t.http)
+        .get('/api/v1/auth/google')
+        .expect(501);
+
+      expect(res.body.error.code).toBe('NOT_IMPLEMENTED');
+      expect(res.body.error.message).toContain('Google OAuth is not configured in this environment');
+    });
+  });
+
   describe('Admin staff management & authorization', () => {
     it('forbids non-admin users from accessing /admin/users (403 FORBIDDEN)', async () => {
       const customerCookie = await t.cookieFor('CUSTOMER');
