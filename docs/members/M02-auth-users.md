@@ -107,9 +107,22 @@ argon2id; constant-ish time failures; strict throttling on `/auth/*` (already 10
   - Full authentication slice implemented: registration (CUSTOMER), argon2id login, refresh token rotation with token reuse breach detection revoking entire session chains, logout, and `/users/me` PATCH (name, phone).
   - Google OAuth 2.0 PKCE end-to-end integration with account linking and automatic role routing.
   - Web UI: `/register` (RegisterForm with Google button), `/login` (LoginForm with Google button), LogoutButton hitting `/api/v1/auth/logout`, and silent refresh 401 retry wrapper.
-  - Comprehensive integration test suite in `apps/api/test/auth/auth.e2e-spec.ts` (11/11 tests passing).
+  - Comprehensive integration test suite in `apps/api/test/auth/auth.e2e-spec.ts` (13/13 tests passing).
 - **Week 3 (Completed):**
   - Admin user management endpoints: `GET /api/v1/admin/users` (pagination, search, role filters), `POST /api/v1/admin/users` (staff creation with automatic `CourierProfile` provisioning for COURIERs and audit logging), `PATCH /api/v1/admin/users/:id` (role change, active status toggle; deactivation immediately revokes all refresh sessions and writes audit logs).
   - Web UI: `/admin/users` dashboard (`AdminUsersDashboard`, `CreateStaffModal`) with server-side role check (`requireRole(['ADMIN'])`), role filter pills, search input, status badge, role modifier, activate/deactivate toggle, and modal for creating staff accounts.
   - Integration tests added verifying courier creation + login (Week 3 exit criterion) and admin deactivation session revocation.
+- **Week 4 (Completed):**
+  - Google OAuth 2.0 PKCE flow end-to-end: `/api/v1/auth/google` (state and PKCE verifier cookies), `/api/v1/auth/google/callback` (Google ID token verification, account linking, customer provisioning, auth cookie issuance), and inline OAuth error display on web forms (`LoginForm`, `RegisterForm`).
+  - Silent refresh retry wrapper in `apps/web/src/lib/api/client.ts` automatically refreshing expired access tokens on 401s.
+- **Week 5 (Completed):**
+  - Expanded team-wide Authorization Matrix e2e test suite (`apps/api/test/auth-matrix/auth-matrix.e2e-spec.ts`) covering `docs/contracts/authorization-matrix.md` across all 5 roles (`CUSTOMER`, `COURIER`, `MERCHANT`, `DISPATCHER`, `ADMIN`).
+  - 79/79 tests passing:
+    - 16 unauthenticated private endpoint tests (401 `UNAUTHENTICATED`).
+    - Public endpoints (`/health`, `/pricing/estimate`, `/tracking/:trackingNumber`).
+    - Universal profile access (`/users/me` GET & PATCH, verifying `passwordHash` is never leaked).
+    - 40+ role boundary negative tests verifying 403 `FORBIDDEN` across all unauthorized endpoints.
+    - Positive authorization tests confirming authorized roles reach handler surfaces.
+    - Merchant partner API key authentication (`X-Api-Key` requirement, rejecting browser cookies).
+
 

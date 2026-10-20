@@ -229,13 +229,18 @@ describe('auth module (integration)', () => {
   });
 
   describe('GET /api/v1/auth/google', () => {
-    it('returns 501 NOT_IMPLEMENTED when GOOGLE_CLIENT_ID is not configured', async () => {
-      const res = await request(t.http)
-        .get('/api/v1/auth/google')
-        .expect(501);
-
-      expect(res.body.error.code).toBe('NOT_IMPLEMENTED');
-      expect(res.body.error.message).toContain('Google OAuth is not configured in this environment');
+    it('handles Google OAuth endpoint (302 redirect when configured, 501 when unconfigured)', async () => {
+      const res = await request(t.http).get('/api/v1/auth/google');
+      if (res.status === 302) {
+        expect(res.headers.location).toContain('accounts.google.com/o/oauth2/v2/auth');
+        const cookies = res.headers['set-cookie'] as unknown as string[];
+        expect(cookies.some((c: string) => c.includes('sd_oauth_verifier'))).toBe(true);
+        expect(cookies.some((c: string) => c.includes('sd_oauth_state'))).toBe(true);
+      } else {
+        expect(res.status).toBe(501);
+        expect(res.body.error.code).toBe('NOT_IMPLEMENTED');
+        expect(res.body.error.message).toContain('Google OAuth is not configured in this environment');
+      }
     });
   });
 
