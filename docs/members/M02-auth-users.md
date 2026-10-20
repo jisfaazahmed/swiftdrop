@@ -103,4 +103,13 @@ argon2id; constant-ish time failures; strict throttling on `/auth/*` (already 10
 
 ## Status / notes
 
-_Update as you go: what's done, deviations, known limitations._
+- **Week 1-2 (Completed):**
+  - Full authentication slice implemented: registration (CUSTOMER), argon2id login, refresh token rotation with token reuse breach detection revoking entire session chains, logout, and `/users/me` PATCH (name, phone).
+  - Google OAuth 2.0 PKCE end-to-end integration with account linking and automatic role routing.
+  - Web UI: `/register` (RegisterForm with Google button), `/login` (LoginForm with Google button), LogoutButton hitting `/api/v1/auth/logout`, and silent refresh 401 retry wrapper.
+  - Comprehensive integration test suite in `apps/api/test/auth/auth.e2e-spec.ts` (11/11 tests passing).
+- **Week 3 (Completed):**
+  - Admin user management endpoints: `GET /api/v1/admin/users` (pagination, search, role filters), `POST /api/v1/admin/users` (staff creation with automatic `CourierProfile` provisioning for COURIERs and audit logging), `PATCH /api/v1/admin/users/:id` (role change, active status toggle; deactivation immediately revokes all refresh sessions and writes audit logs).
+  - Web UI: `/admin/users` dashboard (`AdminUsersDashboard`, `CreateStaffModal`) with server-side role check (`requireRole(['ADMIN'])`), role filter pills, search input, status badge, role modifier, activate/deactivate toggle, and modal for creating staff accounts.
+  - Integration tests added verifying courier creation + login (Week 3 exit criterion) and admin deactivation session revocation.
+

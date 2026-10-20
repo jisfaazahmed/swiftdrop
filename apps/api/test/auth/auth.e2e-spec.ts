@@ -278,6 +278,76 @@ describe('auth module (integration)', () => {
       });
       expect(auditLog).not.toBeNull();
       expect(auditLog?.actorRole).toBe('ADMIN');
+
+      // Week 3 exit criteria: Admin creates a courier who can sign in
+      const courierLoginRes = await request(t.http)
+        .post('/api/v1/auth/login')
+        .send({
+          email: courierEmail,
+          password: 'Password123!',
+        })
+        .expect(200);
+
+      expect(courierLoginRes.body.user.role).toBe('COURIER');
+      expect(courierLoginRes.body.home).toBe('/courier');
+    });
+
+    it('allows ADMIN to deactivate user; revokes sessions and forbids new logins', async () => {
+      const adminCookie = await t.cookieFor('ADMIN');
+      const testEmail = `deactivate-${Date.now()}@swiftdrop.test`;
+
+      // 1. Create a user
+      const createRes = await request(t.http)
+        .post('/api/v1/admin/users')
+        .set('Cookie', adminCookie)
+        .send({
+          email: testEmail,
+          name: 'Deactivate Target',
+          role: 'COURIER',
+          password: 'Password123!',
+        })
+        .expect(201);
+
+      const userId = createRes.body.id;
+
+      // 2. Log in as that user to establish an active session
+      const loginRes = await request(t.http)
+        .post('/api/v1/auth/login')
+        .send({
+          email: testEmail,
+          password: 'Password123!',
+        })
+        .expect(200);
+
+      const loginCookies = loginRes.headers['set-cookie'] as unknown as string[];
+      const refreshCookie = loginCookies.find((c: string) => c.startsWith(`${AUTH_COOKIES.REFRESH}=`))!;
+
+      // 3. Admin deactivates the user
+      await request(t.http)
+        .patch(`/api/v1/admin/users/${userId}`)
+        .set('Cookie', adminCookie)
+        .send({ isActive: false })
+        .expect(200);
+
+      // 4. Verify their refresh session was revoked
+      const refreshRes = await request(t.http)
+        .post('/api/v1/auth/refresh')
+        .set('Cookie', refreshCookie)
+        .expect(401);
+
+      expect(refreshRes.body.error.code).toBe('UNAUTHENTICATED');
+
+      // 5. Verify they cannot log in again (403 ACCOUNT_DISABLED)
+      const reLoginRes = await request(t.http)
+        .post('/api/v1/auth/login')
+        .send({
+          email: testEmail,
+          password: 'Password123!',
+        })
+        .expect(403);
+
+      expect(reLoginRes.body.error.code).toBe('ACCOUNT_DISABLED');
     });
   });
 });
+

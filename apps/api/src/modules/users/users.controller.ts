@@ -5,6 +5,7 @@ import {
   AdminCreateUserDto,
   AdminUpdateUserDto,
   ListUsersQuery,
+  PaginatedUsersDto,
   UpdateMeDto,
   UserDto,
 } from './dto/user.dto';
@@ -38,9 +39,11 @@ export class AdminUsersController {
   constructor(private readonly users: UsersService) {}
 
   @Get()
+  @ApiOkResponse({ type: PaginatedUsersDto })
   list(@Query() q: ListUsersQuery) {
     return this.users.adminList(q);
   }
+
 
   @Post()
   @ApiOkResponse({ type: UserDto })
