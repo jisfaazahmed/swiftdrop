@@ -104,3 +104,13 @@ argon2id; constant-ish time failures; strict throttling on `/auth/*` (already 10
 ## Status / notes
 
 _Update as you go: what's done, deviations, known limitations._
+
+- **PR #1 (Week 2–4 slice):** register, login, refresh (rotation + reuse detection), logout, Google
+  OAuth (state + PKCE), `PATCH /users/me`, admin list/create/update with audit, `/register` page,
+  Google button, silent-refresh helper (`withRefresh`, not wired into pages yet).
+- Review fixes: refresh rotation is atomic (two concurrent refreshes with one token → one wins, the
+  other counts as reuse); duplicate-email races return `EMAIL_TAKEN`; admins cannot change their own
+  role/status; promoting a user to COURIER creates a `CourierProfile`; audit metadata carries no email.
+- Reuse detection revokes **all** of the user's sessions (stricter than "the chain").
+- Still open: `/admin/users` page, unit tests for rotation/linking, auth-matrix extension,
+  optional `isActive` re-check in `JwtAuthGuard`.

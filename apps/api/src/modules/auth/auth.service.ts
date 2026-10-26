@@ -21,6 +21,14 @@ export interface IssuedSession extends AuthResponseDto {
   refreshToken: string;
 }
 
+/** Constant-time string compare; false if either side is missing. */
+function safeEqual(a: string | undefined, b: string | undefined): boolean {
+  if (!a || !b) return false;
+  const ab = Buffer.from(a);
+  const bb = Buffer.from(b);
+  return ab.length === bb.length && crypto.timingSafeEqual(ab, bb);
+}
+
 const DUMMY_HASH =
   '$argon2id$v=19$m=65536,t=3,p=4$dGVzdHRlc3R0ZXN0$dGVzdHRlc3R0ZXN0dGVzdHRlc3R0ZXN0dGVzdHRlc3Q';
 
@@ -109,10 +117,7 @@ export class AuthService {
     // Token reuse detection: if revokedAt is set, this token was already rotated!
     // This indicates an attempted replay attack / token theft. Revoke entire session chain.
     if (session.revokedAt) {
-      await this.prisma.refreshSession.updateMany({
-        where: { userId: session.userId, revokedAt: null },
-        data: { revokedAt: new Date() },
-      });
+      await this.revokeAllSessions(session.userId);
       throw new AppError(
         ERROR_CODES.UNAUTHENTICATED,
         'Session compromised. All active sessions have been revoked.',
@@ -141,7 +146,15 @@ export class AuthService {
     const nextHash = crypto.createHash('sha256').update(nextTokenRaw).digest('hex');
     const expiresAt = new Date(Date.now() + this.config.JWT_REFRESH_TTL_DAYS * 86_400_000);
 
-    await this.prisma.$transaction(async (tx) => {
+    const rotated = await this.prisma.$transaction(async (tx) => {
+      // Claim the old session first. The `revokedAt: null` condition makes this atomic: if two
+      // requests race with the same token, only one gets count === 1.
+      const claimed = await tx.refreshSession.updateMany({
+        where: { id: session.id, revokedAt: null },
+        data: { revokedAt: new Date() },
+      });
+      if (claimed.count !== 1) return false;
+
       const created = await tx.refreshSession.create({
         data: {
           userId: session.userId,
@@ -151,15 +164,22 @@ export class AuthService {
           expiresAt,
         },
       });
-
       await tx.refreshSession.update({
         where: { id: session.id },
-        data: {
-          revokedAt: new Date(),
-          replacedById: created.id,
-        },
+        data: { replacedById: created.id },
       });
+      return true;
     });
+
+    if (!rotated) {
+      // Lost the race: another request already used this token. Treat it as reuse.
+      await this.revokeAllSessions(session.userId);
+      throw new AppError(
+        ERROR_CODES.UNAUTHENTICATED,
+        'Session compromised. All active sessions have been revoked.',
+        HttpStatus.UNAUTHORIZED,
+      );
+    }
 
     const accessToken = await this.tokens.signAccessToken({
       id: session.user.id,
@@ -209,7 +229,6 @@ export class AuthService {
     const state = crypto.randomBytes(32).toString('base64url');
 
     const url = client.generateAuthUrl({
-      access_type: 'offline',
       scope: ['openid', 'email', 'profile'],
       state,
       code_challenge: codeChallenge,
@@ -234,7 +253,7 @@ export class AuthService {
       );
     }
 
-    if (!state || !expectedState || state !== expectedState || !codeVerifier) {
+    if (!code || !codeVerifier || !safeEqual(state, expectedState)) {
       throw new AppError(
         ERROR_CODES.UNAUTHENTICATED,
         'Invalid OAuth state or missing code verifier',
@@ -248,22 +267,28 @@ export class AuthService {
       this.config.GOOGLE_CALLBACK_URL,
     );
 
-    const { tokens } = await client.getToken({ code, codeVerifier });
-    if (!tokens.id_token) {
+    // Library/network failures (bad code, expired code, bad signature) are auth failures, not 500s.
+    const payload = await (async () => {
+      try {
+        const { tokens } = await client.getToken({ code, codeVerifier });
+        if (!tokens.id_token) return undefined;
+        const ticket = await client.verifyIdToken({
+          idToken: tokens.id_token,
+          audience: this.config.GOOGLE_CLIENT_ID,
+        });
+        return ticket.getPayload();
+      } catch {
+        return undefined;
+      }
+    })();
+    if (!payload) {
       throw new AppError(
         ERROR_CODES.UNAUTHENTICATED,
-        'Failed to obtain Google ID token',
+        'Google sign-in failed',
         HttpStatus.UNAUTHORIZED,
       );
     }
-
-    const ticket = await client.verifyIdToken({
-      idToken: tokens.id_token,
-      audience: this.config.GOOGLE_CLIENT_ID,
-    });
-
-    const payload = ticket.getPayload();
-    if (!payload || !payload.email || !payload.email_verified) {
+    if (!payload.email || !payload.email_verified) {
       throw new AppError(
         ERROR_CODES.UNAUTHENTICATED,
         'Google account email is not verified',
@@ -287,6 +312,13 @@ export class AuthService {
       const existing = await this.users.findByEmail(email);
       if (existing) {
         user = existing;
+        if (!existing.isActive) {
+          throw new AppError(
+            ERROR_CODES.ACCOUNT_DISABLED,
+            'Account has been disabled',
+            HttpStatus.FORBIDDEN,
+          );
+        }
         await this.prisma.oAuthAccount.create({
           data: {
             userId: existing.id,
@@ -328,6 +360,13 @@ export class AuthService {
     }
 
     return this.createSession(user, meta);
+  }
+
+  private async revokeAllSessions(userId: string): Promise<void> {
+    await this.prisma.refreshSession.updateMany({
+      where: { userId, revokedAt: null },
+      data: { revokedAt: new Date() },
+    });
   }
 
   private async createSession(user: User, meta: SessionMeta): Promise<IssuedSession> {
