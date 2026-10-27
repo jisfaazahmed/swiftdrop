@@ -6,7 +6,7 @@ import { Alert, Button, FormField, Input } from '@/components/ui';
 import { api } from '@/lib/api/client';
 import { errorMessage } from '@/lib/api/errors';
 
-/** Owner: M2. Works as soon as POST /auth/login is implemented. TODO(M2): Google sign-in button → /api/v1/auth/google */
+/** Owner: M2. Login form with password authentication and Google sign-in. */
 export function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();

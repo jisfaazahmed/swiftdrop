@@ -124,5 +124,13 @@ argon2id; constant-ish time failures; strict throttling on `/auth/*` (already 10
     - 40+ role boundary negative tests verifying 403 `FORBIDDEN` across all unauthorized endpoints.
     - Positive authorization tests confirming authorized roles reach handler surfaces.
     - Merchant partner API key authentication (`X-Api-Key` requirement, rejecting browser cookies).
+- **Week 6 (Completed):**
+  - Real-time deactivation hardening in `JwtAuthGuard`: added 60-second in-memory cache to re-check `user.isActive` on authenticated requests, immediately rejecting deactivated users with 403 `ACCOUNT_DISABLED`.
+  - Immediate cache invalidation in `UsersService.adminUpdate` on deactivation or role change.
+  - Rate limiting verification: added e2e integration test in `test/auth/auth.e2e-spec.ts` verifying 10 req/min throttling on auth endpoints (HTTP 429 `RATE_LIMITED`).
+  - Unit tests added:
+    - `apps/api/src/common/auth/jwt-auth.guard.spec.ts`: public routes, missing token, expired token, active status check, and cache invalidation.
+    - `apps/api/src/modules/auth/auth.service.spec.ts`: refresh rotation, token reuse breach detection revoking entire session chains, expired session rejection, logout, and OAuth linking.
+
 
 
