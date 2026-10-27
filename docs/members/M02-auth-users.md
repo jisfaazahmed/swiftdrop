@@ -131,6 +131,11 @@ argon2id; constant-ish time failures; strict throttling on `/auth/*` (already 10
   - Unit tests added:
     - `apps/api/src/common/auth/jwt-auth.guard.spec.ts`: public routes, missing token, expired token, active status check, and cache invalidation.
     - `apps/api/src/modules/auth/auth.service.spec.ts`: refresh rotation, token reuse breach detection revoking entire session chains, expired session rejection, logout, and OAuth linking.
+- **Week 7 (Completed):**
+  - Cross-module security review across all 14 API services and controllers against the security checklist in `docs/conventions/security.md`.
+  - Formulated and documented evidence and gap analysis in [`docs/security-review.md`](../security-review.md).
+  - Built the formal Negative-Test Gap Matrix mapping required object-level tenancy checks (`404 NOT_FOUND` IDOR prevention) across Customer (M3), Merchant (M5), Courier (M6), and Dispatch (M7).
+
 
 
 

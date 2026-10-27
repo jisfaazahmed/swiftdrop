@@ -153,3 +153,4 @@ describe('JwtAuthGuard (unit)', () => {
     expect(mockPrisma.user.findUnique).toHaveBeenCalledTimes(2);
   });
 });
+
