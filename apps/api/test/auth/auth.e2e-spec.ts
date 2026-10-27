@@ -336,6 +336,7 @@ describe('auth module (integration)', () => {
         .expect(200);
 
       const loginCookies = loginRes.headers['set-cookie'] as unknown as string[];
+      const accessCookie = loginCookies.find((c: string) => c.startsWith(`${AUTH_COOKIES.ACCESS}=`))!;
       const refreshCookie = loginCookies.find((c: string) => c.startsWith(`${AUTH_COOKIES.REFRESH}=`))!;
 
       // 3. Admin deactivates the user
@@ -345,7 +346,15 @@ describe('auth module (integration)', () => {
         .send({ isActive: false })
         .expect(200);
 
-      // 4. Verify their refresh session was revoked
+      // 4. Verify existing access token is immediately rejected by JwtAuthGuard (403 ACCOUNT_DISABLED)
+      const meRes = await request(t.http)
+        .get('/api/v1/users/me')
+        .set('Cookie', accessCookie)
+        .expect(403);
+
+      expect(meRes.body.error.code).toBe('ACCOUNT_DISABLED');
+
+      // 5. Verify their refresh session was revoked
       const refreshRes = await request(t.http)
         .post('/api/v1/auth/refresh')
         .set('Cookie', refreshCookie)
@@ -353,7 +362,7 @@ describe('auth module (integration)', () => {
 
       expect(refreshRes.body.error.code).toBe('UNAUTHENTICATED');
 
-      // 5. Verify they cannot log in again (403 ACCOUNT_DISABLED)
+      // 6. Verify they cannot log in again (403 ACCOUNT_DISABLED)
       const reLoginRes = await request(t.http)
         .post('/api/v1/auth/login')
         .send({
@@ -363,6 +372,26 @@ describe('auth module (integration)', () => {
         .expect(403);
 
       expect(reLoginRes.body.error.code).toBe('ACCOUNT_DISABLED');
+    });
+  });
+
+  describe('Rate limiting (throttling)', () => {
+    it('throttles auth endpoints after exceeding limit (429 RATE_LIMITED)', async () => {
+      // AuthController has strict throttling: 10 requests per 60 seconds
+      // Make 10 requests to reach the limit
+      for (let i = 0; i < 10; i++) {
+        await request(t.http)
+          .post('/api/v1/auth/login')
+          .send({ email: 'rate-limit-test@swiftdrop.test', password: 'Password123!' });
+      }
+
+      // The 11th request must be rejected with 429 RATE_LIMITED
+      const throttledRes = await request(t.http)
+        .post('/api/v1/auth/login')
+        .send({ email: 'rate-limit-test@swiftdrop.test', password: 'Password123!' })
+        .expect(429);
+
+      expect(throttledRes.body.error.code).toBe('RATE_LIMITED');
     });
   });
 });
