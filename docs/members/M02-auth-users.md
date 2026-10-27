@@ -135,6 +135,55 @@ argon2id; constant-ish time failures; strict throttling on `/auth/*` (already 10
   - Cross-module security review across all 14 API services and controllers against the security checklist in `docs/conventions/security.md`.
   - Formulated and documented evidence and gap analysis in [`docs/security-review.md`](../security-review.md).
   - Built the formal Negative-Test Gap Matrix mapping required object-level tenancy checks (`404 NOT_FOUND` IDOR prevention) across Customer (M3), Merchant (M5), Courier (M6), and Dispatch (M7).
+- **Week 8 (Completed):**
+  - Finalized member documentation, Google OAuth live demonstration runbook, and contribution summary below.
+
+---
+
+## Google OAuth 2.0 Live Demo Guide
+
+### 1. Environment Setup
+To demonstrate live Google Sign-In during assessment:
+1. Open Google Cloud Console → **APIs & Services → Credentials**.
+2. Create an **OAuth 2.0 Client ID** (Web application):
+   - **Authorized JavaScript origins**: `http://localhost:8080`
+   - **Authorized redirect URIs**: `http://localhost:8080/api/v1/auth/google/callback`
+3. Add the credentials to `.env`:
+   ```env
+   GOOGLE_CLIENT_ID=<your-client-id>.apps.googleusercontent.com
+   GOOGLE_CLIENT_SECRET=<your-client-secret>
+   GOOGLE_CALLBACK_URL=http://localhost:8080/api/v1/auth/google/callback
+   ```
+4. Reload the API container with the updated `.env`:
+   ```bash
+   docker compose up -d --no-deps api
+   ```
+
+### 2. Demo Walkthrough Steps
+1. **New Customer Auto-Provisioning**:
+   - Navigate to `http://localhost:8080/login` or `http://localhost:8080/register`.
+   - Click **Continue with Google**.
+   - Inspect browser DevTools → Network: `GET /api/v1/auth/google` sets two short-lived `httpOnly` cookies (`sd_oauth_state`, `sd_oauth_verifier`) and responds with HTTP `302 Found` to Google's consent screen with `code_challenge_method=S256`.
+   - Complete Google sign-in: Google redirects to `/api/v1/auth/google/callback?code=...&state=...`.
+   - The server verifies the state cookie, exchanges the code using the PKCE verifier, validates the `id_token` signature and audience via `google-auth-library`, creates a `CUSTOMER` account + `OAuthAccount` link in one database transaction, sets `sd_access` and `sd_refresh` cookies, and redirects to `/customer`.
+2. **Existing Account Linking**:
+   - If a user registers with email/password first and later signs in with Google using the same verified email address, `AuthService.googleCallback` automatically links the `OAuthAccount` to their existing `User` record and preserves their assigned role.
+3. **Graceful Unconfigured Fallback**:
+   - When `GOOGLE_CLIENT_ID` is omitted from `.env`, clicking **Continue with Google** displays an inline alert (`"Google OAuth is not configured in this environment"`) on the login/register card without crashing or leaving the page.
+
+---
+
+## Member 2 — Final Contribution Summary
+
+| Area | Key Deliverables & Files | Verification |
+| :--- | :--- | :--- |
+| **Core Auth & Sessions** | `apps/api/src/modules/auth/auth.service.ts`, `auth.controller.ts`, `dto/auth.dto.ts` — Argon2id hashing, timing-safe login, 256-bit refresh token rotation, token-reuse breach detection revoking entire session chains. | 14 e2e tests in `test/auth/auth.e2e-spec.ts` + 11 unit tests in `auth.service.spec.ts` |
+| **Guards & Real-Time Hardening** | `apps/api/src/common/auth/jwt-auth.guard.ts`, `token.service.ts` — Global JWT verification + 60s cached `isActive` check + immediate cache invalidation on admin update. | 6 unit tests in `jwt-auth.guard.spec.ts` + e2e deactivation test |
+| **Google OAuth 2.0 (PKCE)** | `AuthService.googleAuthUrl` & `googleCallback` — `state` + `S256` PKCE flow, server-side `id_token` verification, automatic customer creation and account linking. | E2E & unit tests + live browser verification |
+| **User & Staff Management** | `apps/api/src/modules/users/users.service.ts`, `users.controller.ts` — `/users/me` profile update, `/admin/users` paginated filtering, staff creation with `CourierProfile` provisioning, session revocation on deactivation, and `AuditService.record` integration. | E2E tests in `test/auth/auth.e2e-spec.ts` |
+| **Web Auth & Admin UI** | `apps/web/src/features/auth/{LoginForm,RegisterForm,AdminUsersDashboard,CreateStaffModal}.tsx`, `apps/web/src/lib/api/client.ts` (silent 401 token refresh retry), `LogoutButton.tsx`. | Verified across Customer, Courier, and Admin portals |
+| **Team Security & Auth Matrix** | `apps/api/test/auth-matrix/auth-matrix.e2e-spec.ts`, `docs/security-review.md`, `docs/contracts/authorization-matrix.md` — Role boundary enforcement and cross-module IDOR negative-test gap tracking. | 79/79 e2e tests passing in `auth-matrix.e2e-spec.ts` |
+
 
 
 
