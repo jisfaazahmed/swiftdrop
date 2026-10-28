@@ -77,9 +77,7 @@ export class JwtAuthGuard implements CanActivate {
     return true;
   }
 
-  private async getUserStatus(
-    userId: string,
-  ): Promise<{ isActive: boolean; role: Role } | null> {
+  private async getUserStatus(userId: string): Promise<{ isActive: boolean; role: Role } | null> {
     const now = Date.now();
     const cached = JwtAuthGuard.statusCache.get(userId);
     if (cached && now - cached.cachedAt < CACHE_TTL_MS) {

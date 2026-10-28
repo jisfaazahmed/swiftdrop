@@ -30,32 +30,35 @@ describe('authorization matrix (role level)', () => {
       ['get', '/api/v1/merchants/me/api-keys'],
       ['get', '/api/v1/merchants/me/webhooks'],
       ['get', '/api/v1/parcels/mine'],
-    ] as const)('rejects unauthenticated %s %s with 401 and error envelope', async (method, path) => {
-      const res = await request(t.http)[method](path).expect(401);
-      expect(res.body).toEqual({
-        error: expect.objectContaining({
-          code: 'UNAUTHENTICATED',
-          requestId: expect.any(String),
-        }),
-      });
-    });
+    ] as const)(
+      'rejects unauthenticated %s %s with 401 and error envelope',
+      async (method, path) => {
+        const res = await request(t.http)[method](path).expect(401);
+        expect(res.body).toEqual({
+          error: expect.objectContaining({
+            code: 'UNAUTHENTICATED',
+            requestId: expect.any(String),
+          }),
+        });
+      },
+    );
   });
 
   describe('Public endpoints (@Public)', () => {
     it('allows unauthenticated access to health check', async () => {
-      const res = await request(t.http).get('/api/v1/health').expect(200);
-      expect(res.body).toMatchObject({ status: 'ok' });
+      // 200 or 503 depending on whether RabbitMQ has connected yet; either way it is not a 401.
+      const res = await request(t.http).get('/api/v1/health');
+      expect([200, 503]).toContain(res.status);
+      expect(res.body.checks.db).toBe(true);
     });
 
     it('allows unauthenticated access to pricing estimate', async () => {
-      const res = await request(t.http)
-        .post('/api/v1/pricing/estimate')
-        .send({
-          pickupCity: 'colombo',
-          dropoffCity: 'kandy',
-          weightKg: 2,
-          size: 'SMALL',
-        });
+      const res = await request(t.http).post('/api/v1/pricing/estimate').send({
+        pickupCity: 'colombo',
+        dropoffCity: 'kandy',
+        weightKg: 2,
+        size: 'SMALL',
+      });
       expect(res.status).not.toBe(401);
       expect(res.status).not.toBe(403);
       expect([200, 501]).toContain(res.status);
@@ -70,14 +73,17 @@ describe('authorization matrix (role level)', () => {
   });
 
   describe('Universal authenticated user access (/users/me)', () => {
-    it.each(ROLES)('allows %s to access /users/me and never leaks passwordHash', async (role: Role) => {
-      const res = await request(t.http)
-        .get('/api/v1/users/me')
-        .set('Cookie', await t.cookieFor(role))
-        .expect(200);
-      expect(res.body).toMatchObject({ role });
-      expect(res.body.passwordHash).toBeUndefined();
-    });
+    it.each(ROLES)(
+      'allows %s to access /users/me and never leaks passwordHash',
+      async (role: Role) => {
+        const res = await request(t.http)
+          .get('/api/v1/users/me')
+          .set('Cookie', await t.cookieFor(role))
+          .expect(200);
+        expect(res.body).toMatchObject({ role });
+        expect(res.body.passwordHash).toBeUndefined();
+      },
+    );
 
     it('allows any signed-in user to PATCH /users/me', async () => {
       const res = await request(t.http)
@@ -214,12 +220,16 @@ describe('authorization matrix (role level)', () => {
       expect(meRes.status).not.toBe(403);
       expect([200, 501]).toContain(meRes.status);
 
-      const keysRes = await request(t.http).get('/api/v1/merchants/me/api-keys').set('Cookie', cookie);
+      const keysRes = await request(t.http)
+        .get('/api/v1/merchants/me/api-keys')
+        .set('Cookie', cookie);
       expect(keysRes.status).not.toBe(401);
       expect(keysRes.status).not.toBe(403);
       expect([200, 501]).toContain(keysRes.status);
 
-      const webhooksRes = await request(t.http).get('/api/v1/merchants/me/webhooks').set('Cookie', cookie);
+      const webhooksRes = await request(t.http)
+        .get('/api/v1/merchants/me/webhooks')
+        .set('Cookie', cookie);
       expect(webhooksRes.status).not.toBe(401);
       expect(webhooksRes.status).not.toBe(403);
       expect([200, 501]).toContain(webhooksRes.status);
@@ -249,7 +259,6 @@ describe('authorization matrix (role level)', () => {
       expect(res.body.error.code).toBe('INVALID_API_KEY');
     });
   });
-
 
   describe('Request validation and error handling', () => {
     it('validates request bodies (400 VALIDATION_FAILED)', async () => {

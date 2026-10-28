@@ -80,7 +80,13 @@ export function CreateStaffModal({ open, onClose, onCreated }: CreateStaffModalP
           </FormField>
 
           <FormField label="Email address" htmlFor="staff-email">
-            <Input id="staff-email" name="email" type="email" required placeholder="staff@swiftdrop.test" />
+            <Input
+              id="staff-email"
+              name="email"
+              type="email"
+              required
+              placeholder="staff@swiftdrop.test"
+            />
           </FormField>
 
           <FormField label="Staff role" htmlFor="staff-role">

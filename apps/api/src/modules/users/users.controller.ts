@@ -44,7 +44,6 @@ export class AdminUsersController {
     return this.users.adminList(q);
   }
 
-
   @Post()
   @ApiOkResponse({ type: UserDto })
   create(@Body() dto: AdminCreateUserDto, @CurrentUser() actor: AuthUser) {
@@ -53,11 +52,7 @@ export class AdminUsersController {
 
   @Patch(':id')
   @ApiOkResponse({ type: UserDto })
-  update(
-    @Param('id') id: string,
-    @Body() dto: AdminUpdateUserDto,
-    @CurrentUser() actor: AuthUser,
-  ) {
+  update(@Param('id') id: string, @Body() dto: AdminUpdateUserDto, @CurrentUser() actor: AuthUser) {
     return this.users.adminUpdate(id, dto, actor);
   }
 }

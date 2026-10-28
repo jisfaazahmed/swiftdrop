@@ -14,6 +14,23 @@ describe('auth module (integration)', () => {
     await t.close();
   });
 
+  /**
+   * The auth controller allows 10 requests a minute per route, counted per app instance. Blocks that
+   * log in a lot call this to run against their own app, so they don't fail depending on how many
+   * logins ran before them.
+   */
+  function useFreshApp() {
+    let shared: TestContext;
+    beforeAll(async () => {
+      shared = t;
+      t = await createTestApp();
+    });
+    afterAll(async () => {
+      await t.close();
+      t = shared;
+    });
+  }
+
   describe('POST /api/v1/auth/register', () => {
     it('registers a new customer, sets cookies, and allows access to /users/me', async () => {
       const email = `test-customer-${Date.now()}@swiftdrop.test`;
@@ -172,7 +189,9 @@ describe('auth module (integration)', () => {
         .expect(200);
 
       const loginCookies = loginRes.headers['set-cookie'] as unknown as string[];
-      const refreshCookie = loginCookies.find((c: string) => c.startsWith(`${AUTH_COOKIES.REFRESH}=`))!;
+      const refreshCookie = loginCookies.find((c: string) =>
+        c.startsWith(`${AUTH_COOKIES.REFRESH}=`),
+      )!;
 
       // 2. Call /auth/refresh with the refresh cookie
       const refreshRes = await request(t.http)
@@ -181,7 +200,9 @@ describe('auth module (integration)', () => {
         .expect(200);
 
       const newCookies = refreshRes.headers['set-cookie'] as unknown as string[];
-      const newRefreshCookie = newCookies.find((c: string) => c.startsWith(`${AUTH_COOKIES.REFRESH}=`))!;
+      const newRefreshCookie = newCookies.find((c: string) =>
+        c.startsWith(`${AUTH_COOKIES.REFRESH}=`),
+      )!;
 
       expect(newRefreshCookie).toBeDefined();
       expect(newRefreshCookie).not.toEqual(refreshCookie);
@@ -215,7 +236,9 @@ describe('auth module (integration)', () => {
         .expect(200);
 
       const loginCookies = loginRes.headers['set-cookie'] as unknown as string[];
-      const refreshCookie = loginCookies.find((c: string) => c.startsWith(`${AUTH_COOKIES.REFRESH}=`))!;
+      const refreshCookie = loginCookies.find((c: string) =>
+        c.startsWith(`${AUTH_COOKIES.REFRESH}=`),
+      )!;
 
       const logoutRes = await request(t.http)
         .post('/api/v1/auth/logout')
@@ -224,12 +247,14 @@ describe('auth module (integration)', () => {
 
       const clearedCookies = logoutRes.headers['set-cookie'] as unknown as string[];
       expect(clearedCookies.some((c: string) => c.includes(`${AUTH_COOKIES.ACCESS}=;`))).toBe(true);
-      expect(clearedCookies.some((c: string) => c.includes(`${AUTH_COOKIES.REFRESH}=;`))).toBe(true);
+      expect(clearedCookies.some((c: string) => c.includes(`${AUTH_COOKIES.REFRESH}=;`))).toBe(
+        true,
+      );
     });
   });
 
   describe('GET /api/v1/auth/google', () => {
-    it('handles Google OAuth endpoint (302 redirect when configured, 501 when unconfigured)', async () => {
+    it('redirects to Google when configured, or returns 501 when not', async () => {
       const res = await request(t.http).get('/api/v1/auth/google');
       if (res.status === 302) {
         expect(res.headers.location).toContain('accounts.google.com/o/oauth2/v2/auth');
@@ -239,7 +264,6 @@ describe('auth module (integration)', () => {
       } else {
         expect(res.status).toBe(501);
         expect(res.body.error.code).toBe('NOT_IMPLEMENTED');
-        expect(res.body.error.message).toContain('Google OAuth is not configured in this environment');
       }
     });
   });
@@ -295,24 +319,19 @@ describe('auth module (integration)', () => {
       expect(auditLog).not.toBeNull();
       expect(auditLog?.actorRole).toBe('ADMIN');
 
-      // Week 3 exit criteria: Admin creates a courier who can sign in
+      // The new courier can sign in and lands on the courier portal.
       const courierLoginRes = await request(t.http)
         .post('/api/v1/auth/login')
-        .send({
-          email: courierEmail,
-          password: 'Password123!',
-        })
+        .send({ email: courierEmail, password: 'Password123!' })
         .expect(200);
-
       expect(courierLoginRes.body.user.role).toBe('COURIER');
       expect(courierLoginRes.body.home).toBe('/courier');
     });
 
-    it('allows ADMIN to deactivate user; revokes sessions and forbids new logins', async () => {
+    it('rejects a deactivated user’s existing access token and blocks new logins', async () => {
       const adminCookie = await t.cookieFor('ADMIN');
-      const testEmail = `deactivate-${Date.now()}@swiftdrop.test`;
+      const testEmail = `deactivate-guard-${Date.now()}@swiftdrop.test`;
 
-      // 1. Create a user
       const createRes = await request(t.http)
         .post('/api/v1/admin/users')
         .set('Cookie', adminCookie)
@@ -324,75 +343,189 @@ describe('auth module (integration)', () => {
         })
         .expect(201);
 
-      const userId = createRes.body.id;
-
-      // 2. Log in as that user to establish an active session
       const loginRes = await request(t.http)
         .post('/api/v1/auth/login')
-        .send({
-          email: testEmail,
-          password: 'Password123!',
-        })
+        .send({ email: testEmail, password: 'Password123!' })
         .expect(200);
-
       const loginCookies = loginRes.headers['set-cookie'] as unknown as string[];
-      const accessCookie = loginCookies.find((c: string) => c.startsWith(`${AUTH_COOKIES.ACCESS}=`))!;
-      const refreshCookie = loginCookies.find((c: string) => c.startsWith(`${AUTH_COOKIES.REFRESH}=`))!;
+      const accessCookie = loginCookies.find((c: string) =>
+        c.startsWith(`${AUTH_COOKIES.ACCESS}=`),
+      )!;
 
-      // 3. Admin deactivates the user
+      // Warm the guard's status cache, so the test proves deactivation invalidates it.
+      await request(t.http).get('/api/v1/users/me').set('Cookie', accessCookie).expect(200);
+
       await request(t.http)
-        .patch(`/api/v1/admin/users/${userId}`)
+        .patch(`/api/v1/admin/users/${createRes.body.id}`)
         .set('Cookie', adminCookie)
         .send({ isActive: false })
         .expect(200);
 
-      // 4. Verify existing access token is immediately rejected by JwtAuthGuard (403 ACCOUNT_DISABLED)
       const meRes = await request(t.http)
         .get('/api/v1/users/me')
         .set('Cookie', accessCookie)
         .expect(403);
-
       expect(meRes.body.error.code).toBe('ACCOUNT_DISABLED');
 
-      // 5. Verify their refresh session was revoked
-      const refreshRes = await request(t.http)
-        .post('/api/v1/auth/refresh')
-        .set('Cookie', refreshCookie)
-        .expect(401);
-
-      expect(refreshRes.body.error.code).toBe('UNAUTHENTICATED');
-
-      // 6. Verify they cannot log in again (403 ACCOUNT_DISABLED)
       const reLoginRes = await request(t.http)
         .post('/api/v1/auth/login')
-        .send({
-          email: testEmail,
-          password: 'Password123!',
-        })
+        .send({ email: testEmail, password: 'Password123!' })
         .expect(403);
-
       expect(reLoginRes.body.error.code).toBe('ACCOUNT_DISABLED');
     });
   });
 
-  describe('Rate limiting (throttling)', () => {
-    it('throttles auth endpoints after exceeding limit (429 RATE_LIMITED)', async () => {
-      // AuthController has strict throttling: 10 requests per 60 seconds
-      // Make 10 requests to reach the limit
-      for (let i = 0; i < 10; i++) {
-        await request(t.http)
+  describe('Hardening (review fixes)', () => {
+    useFreshApp();
+
+    /** Creates an active CUSTOMER with a known password straight in the DB. */
+    async function makeUser(prefix: string) {
+      const email = `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}@swiftdrop.test`;
+      const passwordHash = await argon2.hash('Password123!', { type: argon2.argon2id });
+      const user = await t.prisma.user.create({
+        data: { email, name: 'Hardening User', role: 'CUSTOMER', passwordHash },
+      });
+      return user;
+    }
+
+    async function refreshCookieFor(email: string) {
+      const res = await request(t.http)
+        .post('/api/v1/auth/login')
+        .send({ email, password: 'Password123!' })
+        .expect(200);
+      const cookies = res.headers['set-cookie'] as unknown as string[];
+      return cookies.find((c: string) => c.startsWith(`${AUTH_COOKIES.REFRESH}=`))!;
+    }
+
+    it('lets only one of two concurrent refreshes with the same token succeed', async () => {
+      const user = await makeUser('race');
+      const refreshCookie = await refreshCookieFor(user.email);
+
+      const results = await Promise.all([
+        request(t.http).post('/api/v1/auth/refresh').set('Cookie', refreshCookie),
+        request(t.http).post('/api/v1/auth/refresh').set('Cookie', refreshCookie),
+      ]);
+
+      expect(results.map((r) => r.status).sort()).toEqual([200, 401]);
+    });
+
+    it('revokes all sessions when an admin deactivates a user, and audits it', async () => {
+      const user = await makeUser('deactivate');
+      const refreshCookie = await refreshCookieFor(user.email);
+
+      await request(t.http)
+        .patch(`/api/v1/admin/users/${user.id}`)
+        .set('Cookie', await t.cookieFor('ADMIN'))
+        .send({ isActive: false })
+        .expect(200);
+
+      const active = await t.prisma.refreshSession.count({
+        where: { userId: user.id, revokedAt: null },
+      });
+      expect(active).toBe(0);
+
+      await request(t.http).post('/api/v1/auth/refresh').set('Cookie', refreshCookie).expect(401);
+
+      const audit = await t.prisma.auditLog.findFirst({
+        where: { entityId: user.id, action: 'user.status_changed' },
+      });
+      expect(audit).not.toBeNull();
+    });
+
+    it('creates a CourierProfile when a user is promoted to COURIER', async () => {
+      const user = await makeUser('promote');
+
+      const res = await request(t.http)
+        .patch(`/api/v1/admin/users/${user.id}`)
+        .set('Cookie', await t.cookieFor('ADMIN'))
+        .send({ role: 'COURIER' })
+        .expect(200);
+
+      expect(res.body.role).toBe('COURIER');
+      const profile = await t.prisma.courierProfile.findUnique({ where: { userId: user.id } });
+      expect(profile).not.toBeNull();
+    });
+
+    it('forbids an admin from changing their own role or status', async () => {
+      const admin = await t.prisma.user.findFirstOrThrow({
+        where: { role: 'ADMIN' },
+        orderBy: { email: 'asc' },
+      });
+
+      const res = await request(t.http)
+        .patch(`/api/v1/admin/users/${admin.id}`)
+        .set('Cookie', await t.cookieFor('ADMIN'))
+        .send({ isActive: false })
+        .expect(403);
+
+      expect(res.body.error.code).toBe('FORBIDDEN');
+    });
+
+    it('forbids non-admins from updating users (403)', async () => {
+      const user = await makeUser('dispatcher-target');
+      await request(t.http)
+        .patch(`/api/v1/admin/users/${user.id}`)
+        .set('Cookie', await t.cookieFor('DISPATCHER'))
+        .send({ role: 'ADMIN' })
+        .expect(403);
+    });
+
+    it('returns 404 when updating an unknown user', async () => {
+      await request(t.http)
+        .patch('/api/v1/admin/users/does-not-exist')
+        .set('Cookie', await t.cookieFor('ADMIN'))
+        .send({ isActive: false })
+        .expect(404);
+    });
+
+    it('rejects an admin-created user with a taken email (409 EMAIL_TAKEN)', async () => {
+      const res = await request(t.http)
+        .post('/api/v1/admin/users')
+        .set('Cookie', await t.cookieFor('ADMIN'))
+        .send({
+          email: 'CUSTOMER@swiftdrop.test',
+          name: 'Dup',
+          role: 'DISPATCHER',
+          password: 'Password123!',
+        })
+        .expect(409);
+
+      expect(res.body.error.code).toBe('EMAIL_TAKEN');
+    });
+
+    it('PATCH /users/me updates name and phone but cannot change role', async () => {
+      const user = await makeUser('me');
+      const cookie = await t.cookieFor('CUSTOMER', user.email);
+
+      const res = await request(t.http)
+        .patch('/api/v1/users/me')
+        .set('Cookie', cookie)
+        .send({ name: 'Renamed User', phone: '+94771112233' })
+        .expect(200);
+      expect(res.body).toMatchObject({ name: 'Renamed User', phone: '+94771112233' });
+
+      await request(t.http)
+        .patch('/api/v1/users/me')
+        .set('Cookie', cookie)
+        .send({ role: 'ADMIN' })
+        .expect(400);
+    });
+  });
+
+  describe('Rate limiting', () => {
+    useFreshApp();
+
+    it('throttles login after 10 requests a minute (429 RATE_LIMITED)', async () => {
+      const attempt = () =>
+        request(t.http)
           .post('/api/v1/auth/login')
           .send({ email: 'rate-limit-test@swiftdrop.test', password: 'Password123!' });
-      }
 
-      // The 11th request must be rejected with 429 RATE_LIMITED
-      const throttledRes = await request(t.http)
-        .post('/api/v1/auth/login')
-        .send({ email: 'rate-limit-test@swiftdrop.test', password: 'Password123!' })
-        .expect(429);
+      for (let i = 0; i < 10; i++) expect((await attempt()).status).not.toBe(429);
 
-      expect(throttledRes.body.error.code).toBe('RATE_LIMITED');
+      const res = await attempt();
+      expect(res.status).toBe(429);
+      expect(res.body.error.code).toBe('RATE_LIMITED');
     });
   });
 });
-

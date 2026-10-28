@@ -1,6 +1,6 @@
 import { HttpStatus, Injectable } from '@nestjs/common';
 import { ERROR_CODES, type Role } from '@swiftdrop/contracts';
-import type { Prisma, User } from '@swiftdrop/db';
+import { Prisma, type User } from '@swiftdrop/db';
 import * as argon2 from 'argon2';
 import { JwtAuthGuard, type AuthUser } from '../../common/auth';
 import { AppError, notFound } from '../../common/errors/app-error';
@@ -51,29 +51,7 @@ export class UsersService {
 
   /** Used by auth registration (M2) and merchant registration (M5). */
   async createUser(input: CreateUserInput): Promise<User> {
-    const email = input.email.toLowerCase().trim();
-    const existing = await this.findByEmail(email);
-    if (existing) {
-      throw new AppError(
-        ERROR_CODES.EMAIL_TAKEN,
-        'An account with this email already exists',
-        HttpStatus.CONFLICT,
-      );
-    }
-
-    const passwordHash = input.password
-      ? await argon2.hash(input.password, { type: argon2.argon2id })
-      : null;
-
-    return this.prisma.user.create({
-      data: {
-        email,
-        name: input.name.trim(),
-        phone: input.phone?.trim() ?? null,
-        role: input.role,
-        passwordHash,
-      },
-    });
+    return this.insertUser(this.prisma, input);
   }
 
   async updateMe(userId: string, dto: UpdateMeDto): Promise<UserDto> {
@@ -121,107 +99,122 @@ export class UsersService {
     );
   }
 
-  async adminCreate(dto: AdminCreateUserDto, actor?: AuthUser): Promise<UserDto> {
-    const email = dto.email.toLowerCase().trim();
-    const existing = await this.findByEmail(email);
-    if (existing) {
-      throw new AppError(
-        ERROR_CODES.EMAIL_TAKEN,
-        'An account with this email already exists',
-        HttpStatus.CONFLICT,
-      );
-    }
-
-    const passwordHash = await argon2.hash(dto.password, { type: argon2.argon2id });
-
+  async adminCreate(dto: AdminCreateUserDto, actor: AuthUser): Promise<UserDto> {
     const user = await this.prisma.$transaction(async (tx) => {
-      const created = await tx.user.create({
-        data: {
-          email,
-          name: dto.name.trim(),
-          phone: dto.phone?.trim() ?? null,
-          role: dto.role,
-          passwordHash,
-        },
-      });
-
-      if (dto.role === 'COURIER') {
-        await tx.courierProfile.create({
-          data: {
-            userId: created.id,
-          },
-        });
+      const created = await this.insertUser(tx, dto);
+      if (created.role === 'COURIER') {
+        await tx.courierProfile.create({ data: { userId: created.id } });
       }
-
       await this.audit.record(
         {
-          actor: actor ? { id: actor.id, role: actor.role } : null,
+          actor: { id: actor.id, role: actor.role },
           action: 'user.created',
           entityType: 'User',
           entityId: created.id,
-          metadata: { role: created.role, email: created.email },
+          metadata: { role: created.role },
         },
         tx,
       );
-
       return created;
     });
-
     return this.toDto(user);
   }
 
-  async adminUpdate(id: string, dto: AdminUpdateUserDto, actor?: AuthUser): Promise<UserDto> {
+  async adminUpdate(id: string, dto: AdminUpdateUserDto, actor: AuthUser): Promise<UserDto> {
     const user = await this.findById(id);
     if (!user) throw notFound('User');
 
-    const updated = await this.prisma.$transaction(async (tx) => {
-      const data: Prisma.UserUpdateInput = {};
-      if (dto.role !== undefined) data.role = dto.role;
-      if (dto.isActive !== undefined) data.isActive = dto.isActive;
+    const roleChanged = dto.role !== undefined && dto.role !== user.role;
+    const activeChanged = dto.isActive !== undefined && dto.isActive !== user.isActive;
+    if (!roleChanged && !activeChanged) return this.toDto(user);
 
+    // An admin must not lock themselves out (demote or deactivate their own account).
+    if (id === actor.id) {
+      throw new AppError(
+        ERROR_CODES.FORBIDDEN,
+        'You cannot change your own role or status',
+        HttpStatus.FORBIDDEN,
+      );
+    }
+
+    const updated = await this.prisma.$transaction(async (tx) => {
       const u = await tx.user.update({
         where: { id },
-        data,
+        data: { role: dto.role, isActive: dto.isActive },
       });
 
-      if (dto.isActive === false) {
+      // Couriers need a profile for dispatch (M7), whether created as COURIER or promoted later.
+      if (roleChanged && u.role === 'COURIER') {
+        await tx.courierProfile.upsert({
+          where: { userId: id },
+          create: { userId: id },
+          update: {},
+        });
+      }
+
+      // Deactivation ends every session. (A role change needs nothing: refresh re-reads the role.)
+      if (activeChanged && !u.isActive) {
         await tx.refreshSession.updateMany({
           where: { userId: id, revokedAt: null },
           data: { revokedAt: new Date() },
         });
       }
 
-      const action =
-        dto.role !== undefined && dto.isActive !== undefined
-          ? 'user.updated'
-          : dto.role !== undefined
-            ? 'user.role_changed'
-            : 'user.status_changed';
-
       await this.audit.record(
         {
-          actor: actor ? { id: actor.id, role: actor.role } : null,
-          action,
+          actor: { id: actor.id, role: actor.role },
+          action:
+            roleChanged && activeChanged
+              ? 'user.updated'
+              : roleChanged
+                ? 'user.role_changed'
+                : 'user.status_changed',
           entityType: 'User',
           entityId: id,
           metadata: {
             previousRole: user.role,
-            newRole: dto.role ?? user.role,
+            newRole: u.role,
             previousIsActive: user.isActive,
-            newIsActive: dto.isActive ?? user.isActive,
+            newIsActive: u.isActive,
           },
         },
         tx,
       );
-
       return u;
     });
 
-    if (dto.isActive !== undefined || dto.role !== undefined) {
-      JwtAuthGuard.invalidateUser(id);
-    }
+    // Make JwtAuthGuard re-read the new role/status on the user's next request.
+    JwtAuthGuard.invalidateUser(id);
 
     return this.toDto(updated);
+  }
+
+  /** Normalises the email, hashes the password and maps a duplicate email to EMAIL_TAKEN. */
+  private async insertUser(db: Prisma.TransactionClient, input: CreateUserInput): Promise<User> {
+    const email = input.email.toLowerCase().trim();
+    if (await db.user.findUnique({ where: { email } })) throw emailTaken();
+
+    const passwordHash = input.password
+      ? await argon2.hash(input.password, { type: argon2.argon2id })
+      : null;
+
+    try {
+      return await db.user.create({
+        data: {
+          email,
+          name: input.name.trim(),
+          phone: input.phone?.trim() || null,
+          role: input.role,
+          passwordHash,
+        },
+      });
+    } catch (e) {
+      // Two sign-ups with the same email at once: the unique index catches the loser.
+      if (e instanceof Prisma.PrismaClientKnownRequestError && e.code === 'P2002') {
+        throw emailTaken();
+      }
+      throw e;
+    }
   }
 
   toDto(u: User): UserDto {
@@ -236,3 +229,10 @@ export class UsersService {
     };
   }
 }
+
+const emailTaken = () =>
+  new AppError(
+    ERROR_CODES.EMAIL_TAKEN,
+    'An account with this email already exists',
+    HttpStatus.CONFLICT,
+  );

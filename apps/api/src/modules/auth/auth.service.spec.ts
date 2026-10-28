@@ -62,14 +62,12 @@ describe('AuthService (unit)', () => {
       GOOGLE_CALLBACK_URL: 'http://localhost:8080/api/v1/auth/google/callback',
     } as unknown as Env;
 
-    authService = new AuthService(mockPrisma, mockTokens, mockUsers, mockConfig);
+    authService = new AuthService(mockPrisma, mockUsers, mockTokens, mockConfig);
   });
 
   describe('Refresh Token Rotation & Breach Detection', () => {
     it('throws UNAUTHENTICATED if refresh token is missing', async () => {
-      await expect(
-        authService.refresh(undefined, { ip: '127.0.0.1' }),
-      ).rejects.toMatchObject({
+      await expect(authService.refresh(undefined, { ip: '127.0.0.1' })).rejects.toMatchObject({
         code: ERROR_CODES.UNAUTHENTICATED,
         status: HttpStatus.UNAUTHORIZED,
       });
@@ -97,9 +95,7 @@ describe('AuthService (unit)', () => {
 
       mockPrisma.refreshSession.findUnique.mockResolvedValue(alreadyRevokedSession);
 
-      await expect(
-        authService.refresh('reused-token', { ip: '127.0.0.1' }),
-      ).rejects.toMatchObject({
+      await expect(authService.refresh('reused-token', { ip: '127.0.0.1' })).rejects.toMatchObject({
         code: ERROR_CODES.UNAUTHENTICATED,
         message: expect.stringContaining('Session compromised'),
       });
@@ -122,12 +118,12 @@ describe('AuthService (unit)', () => {
 
       mockPrisma.refreshSession.findUnique.mockResolvedValue(expiredSession);
 
-      await expect(
-        authService.refresh('expired-token', { ip: '127.0.0.1' }),
-      ).rejects.toMatchObject({
-        code: ERROR_CODES.UNAUTHENTICATED,
-        message: 'Refresh session expired',
-      });
+      await expect(authService.refresh('expired-token', { ip: '127.0.0.1' })).rejects.toMatchObject(
+        {
+          code: ERROR_CODES.UNAUTHENTICATED,
+          message: 'Refresh session expired',
+        },
+      );
     });
 
     it('throws ACCOUNT_DISABLED if user account was deactivated', async () => {
@@ -141,9 +137,7 @@ describe('AuthService (unit)', () => {
 
       mockPrisma.refreshSession.findUnique.mockResolvedValue(disabledUserSession);
 
-      await expect(
-        authService.refresh('valid-token', { ip: '127.0.0.1' }),
-      ).rejects.toMatchObject({
+      await expect(authService.refresh('valid-token', { ip: '127.0.0.1' })).rejects.toMatchObject({
         code: ERROR_CODES.ACCOUNT_DISABLED,
         status: HttpStatus.FORBIDDEN,
       });
@@ -159,6 +153,7 @@ describe('AuthService (unit)', () => {
       };
 
       mockPrisma.refreshSession.findUnique.mockResolvedValue(validSession);
+      mockPrisma.refreshSession.updateMany.mockResolvedValue({ count: 1 });
       mockPrisma.refreshSession.create.mockResolvedValue({ id: 'session-new' });
 
       const result = await authService.refresh('valid-refresh-token', {
@@ -171,13 +166,36 @@ describe('AuthService (unit)', () => {
       expect(result.user.email).toBe(fakeUser.email);
       expect(result.home).toBe('/customer');
 
-      // Old session was revoked and linked to new session
+      // Old session is claimed atomically (only while still unrevoked), then linked to the new one
+      expect(mockPrisma.refreshSession.updateMany).toHaveBeenCalledWith({
+        where: { id: validSession.id, revokedAt: null },
+        data: { revokedAt: expect.any(Date) },
+      });
       expect(mockPrisma.refreshSession.update).toHaveBeenCalledWith({
         where: { id: validSession.id },
-        data: expect.objectContaining({
-          revokedAt: expect.any(Date),
-          replacedById: 'session-new',
-        }),
+        data: { replacedById: 'session-new' },
+      });
+    });
+
+    it('treats a lost rotation race as token reuse and revokes all sessions', async () => {
+      mockPrisma.refreshSession.findUnique.mockResolvedValue({
+        id: 'session-raced',
+        userId: fakeUser.id,
+        user: fakeUser,
+        revokedAt: null,
+        expiresAt: new Date(Date.now() + 86_400_000),
+      });
+      // The claim finds the row already revoked by the concurrent request.
+      mockPrisma.refreshSession.updateMany.mockResolvedValueOnce({ count: 0 });
+
+      await expect(
+        authService.refresh('raced-token', { userAgent: 'JestTestRunner', ip: '127.0.0.1' }),
+      ).rejects.toMatchObject({ code: 'UNAUTHENTICATED' });
+
+      expect(mockPrisma.refreshSession.create).not.toHaveBeenCalled();
+      expect(mockPrisma.refreshSession.updateMany).toHaveBeenLastCalledWith({
+        where: { userId: fakeUser.id, revokedAt: null },
+        data: { revokedAt: expect.any(Date) },
       });
     });
   });
@@ -203,7 +221,7 @@ describe('AuthService (unit)', () => {
 
   describe('Google OAuth Profile Linking', () => {
     it('throws NOT_IMPLEMENTED when Google credentials are not configured', async () => {
-      const unconfiguredService = new AuthService(mockPrisma, mockTokens, mockUsers, {
+      const unconfiguredService = new AuthService(mockPrisma, mockUsers, mockTokens, {
         ...mockConfig,
         GOOGLE_CLIENT_ID: '',
         GOOGLE_CLIENT_SECRET: '',
@@ -230,4 +248,3 @@ describe('AuthService (unit)', () => {
     });
   });
 });
-

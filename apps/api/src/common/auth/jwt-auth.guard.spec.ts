@@ -30,7 +30,10 @@ describe('JwtAuthGuard (unit)', () => {
     guard = new JwtAuthGuard(reflector, tokenService, mockPrisma);
   });
 
-  function createMockContext(headers: Record<string, string> = {}, cookies: Record<string, string> = {}) {
+  function createMockContext(
+    headers: Record<string, string> = {},
+    cookies: Record<string, string> = {},
+  ) {
     const req: any = {
       headers,
       cookies,
@@ -114,7 +117,10 @@ describe('JwtAuthGuard (unit)', () => {
       role: 'CUSTOMER',
     });
 
-    const ctx = createMockContext({}, { [AUTH_COOKIES.ACCESS]: 'valid.token.for.deactivated.user' });
+    const ctx = createMockContext(
+      {},
+      { [AUTH_COOKIES.ACCESS]: 'valid.token.for.deactivated.user' },
+    );
 
     await expect(guard.canActivate(ctx)).rejects.toMatchObject({
       code: ERROR_CODES.ACCOUNT_DISABLED,
@@ -153,4 +159,3 @@ describe('JwtAuthGuard (unit)', () => {
     expect(mockPrisma.user.findUnique).toHaveBeenCalledTimes(2);
   });
 });
-

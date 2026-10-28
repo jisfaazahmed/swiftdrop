@@ -60,4 +60,3 @@ export class ListUsersQuery extends PaginationQuery {
   @ApiPropertyOptional({ enum: ROLES }) @IsOptional() @IsIn(ROLES) role?: Role;
   @ApiPropertyOptional() @IsOptional() @IsString() search?: string;
 }
-

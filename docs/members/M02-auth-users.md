@@ -143,7 +143,9 @@ argon2id; constant-ish time failures; strict throttling on `/auth/*` (already 10
 ## Google OAuth 2.0 Live Demo Guide
 
 ### 1. Environment Setup
+
 To demonstrate live Google Sign-In during assessment:
+
 1. Open Google Cloud Console → **APIs & Services → Credentials**.
 2. Create an **OAuth 2.0 Client ID** (Web application):
    - **Authorized JavaScript origins**: `http://localhost:8080`
@@ -160,6 +162,7 @@ To demonstrate live Google Sign-In during assessment:
    ```
 
 ### 2. Demo Walkthrough Steps
+
 1. **New Customer Auto-Provisioning**:
    - Navigate to `http://localhost:8080/login` or `http://localhost:8080/register`.
    - Click **Continue with Google**.
@@ -175,16 +178,20 @@ To demonstrate live Google Sign-In during assessment:
 
 ## Member 2 — Final Contribution Summary
 
-| Area | Key Deliverables & Files | Verification |
-| :--- | :--- | :--- |
-| **Core Auth & Sessions** | `apps/api/src/modules/auth/auth.service.ts`, `auth.controller.ts`, `dto/auth.dto.ts` — Argon2id hashing, timing-safe login, 256-bit refresh token rotation, token-reuse breach detection revoking entire session chains. | 14 e2e tests in `test/auth/auth.e2e-spec.ts` + 11 unit tests in `auth.service.spec.ts` |
-| **Guards & Real-Time Hardening** | `apps/api/src/common/auth/jwt-auth.guard.ts`, `token.service.ts` — Global JWT verification + 60s cached `isActive` check + immediate cache invalidation on admin update. | 6 unit tests in `jwt-auth.guard.spec.ts` + e2e deactivation test |
-| **Google OAuth 2.0 (PKCE)** | `AuthService.googleAuthUrl` & `googleCallback` — `state` + `S256` PKCE flow, server-side `id_token` verification, automatic customer creation and account linking. | E2E & unit tests + live browser verification |
-| **User & Staff Management** | `apps/api/src/modules/users/users.service.ts`, `users.controller.ts` — `/users/me` profile update, `/admin/users` paginated filtering, staff creation with `CourierProfile` provisioning, session revocation on deactivation, and `AuditService.record` integration. | E2E tests in `test/auth/auth.e2e-spec.ts` |
-| **Web Auth & Admin UI** | `apps/web/src/features/auth/{LoginForm,RegisterForm,AdminUsersDashboard,CreateStaffModal}.tsx`, `apps/web/src/lib/api/client.ts` (silent 401 token refresh retry), `LogoutButton.tsx`. | Verified across Customer, Courier, and Admin portals |
-| **Team Security & Auth Matrix** | `apps/api/test/auth-matrix/auth-matrix.e2e-spec.ts`, `docs/security-review.md`, `docs/contracts/authorization-matrix.md` — Role boundary enforcement and cross-module IDOR negative-test gap tracking. | 79/79 e2e tests passing in `auth-matrix.e2e-spec.ts` |
+| Area                             | Key Deliverables & Files                                                                                                                                                                                                                                             | Verification                                                                           |
+| :------------------------------- | :------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | :------------------------------------------------------------------------------------- |
+| **Core Auth & Sessions**         | `apps/api/src/modules/auth/auth.service.ts`, `auth.controller.ts`, `dto/auth.dto.ts` — Argon2id hashing, timing-safe login, 256-bit refresh token rotation, token-reuse breach detection revoking entire session chains.                                             | 14 e2e tests in `test/auth/auth.e2e-spec.ts` + 11 unit tests in `auth.service.spec.ts` |
+| **Guards & Real-Time Hardening** | `apps/api/src/common/auth/jwt-auth.guard.ts`, `token.service.ts` — Global JWT verification + 60s cached `isActive` check + immediate cache invalidation on admin update.                                                                                             | 6 unit tests in `jwt-auth.guard.spec.ts` + e2e deactivation test                       |
+| **Google OAuth 2.0 (PKCE)**      | `AuthService.googleAuthUrl` & `googleCallback` — `state` + `S256` PKCE flow, server-side `id_token` verification, automatic customer creation and account linking.                                                                                                   | E2E & unit tests + live browser verification                                           |
+| **User & Staff Management**      | `apps/api/src/modules/users/users.service.ts`, `users.controller.ts` — `/users/me` profile update, `/admin/users` paginated filtering, staff creation with `CourierProfile` provisioning, session revocation on deactivation, and `AuditService.record` integration. | E2E tests in `test/auth/auth.e2e-spec.ts`                                              |
+| **Web Auth & Admin UI**          | `apps/web/src/features/auth/{LoginForm,RegisterForm,AdminUsersDashboard,CreateStaffModal}.tsx`, `apps/web/src/lib/api/client.ts` (silent 401 token refresh retry), `LogoutButton.tsx`.                                                                               | Verified across Customer, Courier, and Admin portals                                   |
+| **Team Security & Auth Matrix**  | `apps/api/test/auth-matrix/auth-matrix.e2e-spec.ts`, `docs/security-review.md`, `docs/contracts/authorization-matrix.md` — Role boundary enforcement and cross-module IDOR negative-test gap tracking.                                                               | 79/79 e2e tests passing in `auth-matrix.e2e-spec.ts`                                   |
 
+### Review fixes merged from PR #1 (kept when PR #6 was merged)
 
-
-
-
+- Refresh rotation is atomic: two concurrent refreshes with one token → one wins, the other counts
+  as reuse. Reuse detection revokes **all** of the user's sessions (stricter than "the chain").
+- Duplicate-email races return `EMAIL_TAKEN`; admins cannot change their own role/status; promoting a
+  user to COURIER creates a `CourierProfile`; audit metadata carries no email.
+- The `JwtAuthGuard` status cache is per API process. Another instance can keep a stale role/status
+  for up to 60 s (refresh sessions are still revoked at once on deactivation).

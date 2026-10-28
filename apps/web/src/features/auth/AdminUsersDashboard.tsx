@@ -94,9 +94,7 @@ export function AdminUsersDashboard({ initialUsers }: AdminUsersDashboardProps) 
       return setError(errorMessage(apiErr, 'Failed to update account status'));
     }
 
-    setUsers((prev) =>
-      prev.map((u) => (u.id === user.id ? { ...u, isActive: nextState } : u)),
-    );
+    setUsers((prev) => prev.map((u) => (u.id === user.id ? { ...u, isActive: nextState } : u)));
   }
 
   async function handleRoleChange(user: UserRow, newRole: Role) {
@@ -117,9 +115,7 @@ export function AdminUsersDashboard({ initialUsers }: AdminUsersDashboardProps) 
       return setError(errorMessage(apiErr, 'Failed to update role'));
     }
 
-    setUsers((prev) =>
-      prev.map((u) => (u.id === user.id ? { ...u, role: newRole } : u)),
-    );
+    setUsers((prev) => prev.map((u) => (u.id === user.id ? { ...u, role: newRole } : u)));
   }
 
   function handleSearchSubmit(e: React.FormEvent) {
@@ -199,11 +195,7 @@ export function AdminUsersDashboard({ initialUsers }: AdminUsersDashboardProps) 
             onClick={() => handleToggleActive(u)}
             className="px-2.5 py-1 text-xs"
           >
-            {updatingId === u.id
-              ? '…'
-              : u.isActive
-                ? 'Deactivate'
-                : 'Activate'}
+            {updatingId === u.id ? '…' : u.isActive ? 'Deactivate' : 'Activate'}
           </Button>
         </div>
       ),
